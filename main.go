@@ -85,88 +85,113 @@ func getRandomAnswers(questions []Question, correctAnswer string, count int) []s
 }
 
 func main() {
-	rand.Seed(time.Now().UnixNano()) //Seed the random number generator
+	rand.Seed(time.Now().UnixNano()) // Seed the random number generator
 
-	//Load questions from the Excel file
+	// Load quiz questions from an Excel file
 	questions, err := loadQuestionsFromExcel("quizsheet.xlsx")
 	if err != nil {
-		log.Fatalf("Failed to load quiz questions: %v", err) //Exit if loading fails
+		log.Fatalf("Failed to load quiz questions: %v", err)
 	}
 
-	//Initialize Fyne app
+	// Initialize the Fyne application
 	a := app.New()
 	w := a.NewWindow("Genki Quiz")
-	w.Resize(fyne.NewSize(500, 400)) //set the window size
+	w.Resize(fyne.NewSize(500, 400)) // Set the window size
 
-	//UI state variables
-	score := 0            // Tracks the user's score
-	currentChapter := "1" // Default chapter to "1"
-	chapterSelector := widget.NewRadioGroup([]string{"1", "2", "3", "4"}, func(selected string) {
-		currentChapter = selected // Update the chapter when user selects it
-	})
-	chapterSelector.SetSelected("1") //Set the default selected chapter
+	// Variables to track the game's state
+	score := 0                            // User's score
+	currentChapter := ""                  // Currently selected chapter
+	var questionContainer *fyne.Container // Container for dynamically switching views
 
-	//Create labels and containers for the UI
-	questionLabel := widget.NewLabel("")                           // Displays the question
-	romajiLabel := widget.NewLabel("")                             // Displays the Romaji (phonetic representation)
-	optionsContainer := container.NewVBox()                        // Contains the answer buttons
-	scoreLabel := widget.NewLabel(fmt.Sprintf("Score: %d", score)) // Displays the current score
+	// UI elements for the quiz game
+	questionLabel := widget.NewLabel("")                           // Label to display the current question
+	romajiLabel := widget.NewLabel("")                             // Label to display the romaji
+	optionsContainer := container.NewVBox()                        // Container for answer options
+	scoreLabel := widget.NewLabel(fmt.Sprintf("Score: %d", score)) // Display user's score
 
-	//Declare loadQuestion as a closure so it can access the UI elements
-	var loadQuestion func()
+	// Function placeholders for dynamic behavior
+	var loadQuestion func()         // Function to load the next question
+	var showChapterSelection func() // Function to show chapter selection menu
+
+	// Layout for the main quiz game
+	gameLayout := func() fyne.CanvasObject {
+		return container.NewVBox(
+			container.NewCenter(widget.NewLabel("Genki Quiz!")), //Center the title
+			questionLabel,    // Display the question
+			romajiLabel,      // Display the romaji (phoenetic hint)
+			optionsContainer, // Buttons for answer choices
+			scoreLabel,       // Display the score
+			widget.NewButton("Change Chapter", func() {
+				// Show chapter selection menu when the button is clicked
+				showChapterSelection()
+			}),
+			widget.NewButton("Next Question", loadQuestion),
+		)
+	}
+
+	// Chapter selection menu
+	showChapterSelection = func() {
+		// Clear the current view and show chapter selection options
+		questionContainer.Objects = []fyne.CanvasObject{
+			container.NewCenter(container.NewVBox(
+				widget.NewLabel("Select Chapter:"), // Prompt to select a chapter
+				widget.NewRadioGroup([]string{"1", "2", "3", "4"}, func(selected string) {
+					//Update the selected chapter and switch to quiz view
+					currentChapter = selected
+					questionContainer.Objects = []fyne.CanvasObject{gameLayout()} // Load the game layout
+					questionContainer.Refresh()                                   // Refresh to apply changes
+					loadQuestion()
+				}),
+			)),
+		}
+		questionContainer.Refresh() // Refresh the container to show the menu
+
+	}
+
+	// Load a new question based on the selected chapter
 	loadQuestion = func() {
-		//Filter questions for the selected chapter
+		// Filter questions by the selected chapter
 		chapterQuestions := getQuestionsByChapter(questions, currentChapter)
 		if len(chapterQuestions) == 0 {
-			//No questions available for this chapter
+			//Display a message if no questions are available
 			questionLabel.SetText("No questions available for this chapter.")
-			optionsContainer.Objects = nil //clear options
+			optionsContainer.Objects = nil
 			optionsContainer.Refresh()
 			return
 		}
 
-		//Select a random question from the filtered list
+		//Randomly pick a question
 		q := chapterQuestions[rand.Intn(len(chapterQuestions))]
-		questionLabel.SetText(q.QHirakata)                        //Set the question text
-		romajiLabel.SetText(fmt.Sprintf("Romaji: %s", q.QRomaji)) //Display romaji
+		questionLabel.SetText(q.QHirakata)                        // Set the question text
+		romajiLabel.SetText(fmt.Sprintf("Romaji: %s", q.QRomaji)) // Display the romaji
 
 		// Generate 4 answer options (1 correct + 3 random wrong answers)
 		randomAnswers := getRandomAnswers(chapterQuestions, q.QAnswer, 3)
-		allAnswers := append(randomAnswers, q.QAnswer) // combine wrong and correct answer
-		rand.Shuffle(len(allAnswers), func(i, j int) { //shuffle the answers
+		allAnswers := append(randomAnswers, q.QAnswer) // Combine correct and wrong answers
+		rand.Shuffle(len(allAnswers), func(i, j int) { // Shuffle the options
 			allAnswers[i], allAnswers[j] = allAnswers[j], allAnswers[i]
 		})
 
-		//Clear and reload the options
+		// Clear and populate the options container
 		optionsContainer.Objects = nil
 		for _, opt := range allAnswers {
-			opt := opt //capture the loop variable
+			opt := opt // Capture the loop variable
 			button := widget.NewButton(opt, func() {
-				//check if the selected answer is correct
+				//Check if the selected answer is correct
 				if opt == q.QAnswer {
-					score++ //Increment score for correct answer
+					score++ // Increment score for a correct answer
 				}
-				scoreLabel.SetText(fmt.Sprintf("Score: %d", score)) //Update score display
-				loadQuestion()                                      //load the next question
+				scoreLabel.SetText(fmt.Sprintf("Score: %d", score)) // Update the score display
+				loadQuestion()                                      // Load the next question
 			})
-			optionsContainer.Add(button) //Add button to the container
+			optionsContainer.Add(button) // Add the button to the container
 		}
-		optionsContainer.Refresh() // Refresh the container to display images
+		optionsContainer.Refresh() // Refresh the container to display the buttons
 	}
+	questionContainer = container.NewVBox() // Create a container for dynamic content
+	showChapterSelection()                  // Show the chapter selection menu initially
+	w.SetContent(questionContainer)         // Set the window content
 
-	//Initial question load
-	loadQuestion()
-
-	//Set up the layout
-	w.SetContent(container.NewVBox(
-		widget.NewLabel("Select Chapter:"),
-		chapterSelector,
-		questionLabel,
-		romajiLabel,
-		optionsContainer,
-		scoreLabel,
-		widget.NewButton("Next Question", loadQuestion),
-	))
-
+	// Start the application
 	w.ShowAndRun()
 }
