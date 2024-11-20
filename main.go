@@ -8,7 +8,9 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/xuri/excelize/v2"
 )
@@ -104,10 +106,15 @@ func main() {
 	var questionContainer *fyne.Container // Container for dynamically switching views
 
 	// UI elements for the quiz game
-	questionLabel := widget.NewLabel("")                           // Label to display the current question
-	romajiLabel := widget.NewLabel("")                             // Label to display the romaji
+	questionLabel := canvas.NewText("", theme.TextColor())         // Declare a `canvas.Text` for `questionLabel`
+	questionLabel.TextStyle = fyne.TextStyle{Bold: true}           // Set text style to bold
+	questionLabel.TextSize = 24                                    // Set a larger font size (default is 14)
+	romajiLabel := widget.NewLabel("")                             // Label to display the romaji (hidden initially)
 	optionsContainer := container.NewVBox()                        // Container for answer options
 	scoreLabel := widget.NewLabel(fmt.Sprintf("Score: %d", score)) // Display user's score
+	var clickableRomajiLabel *widget.Button                        // Declare the clickable label first
+
+	romajiLabel.Hide() // Hide the romaji label initially
 
 	// Function placeholders for dynamic behavior
 	var loadQuestion func()         // Function to load the next question
@@ -115,17 +122,38 @@ func main() {
 
 	// Layout for the main quiz game
 	gameLayout := func() fyne.CanvasObject {
+		romajiVisible := false // Track romaji visibility
+
+		// Initialize the clickable label as a button styled as plain text
+		clickableRomajiLabel = widget.NewButton("Show Romaji", func() {
+			romajiVisible = !romajiVisible
+			if romajiVisible {
+				romajiLabel.Show()                          // Show the romaji text
+				clickableRomajiLabel.SetText("Hide Romaji") // Update the label text
+			} else {
+				romajiLabel.Hide()                          // Hide the romaji text
+				clickableRomajiLabel.SetText("Show Romaji") // Update the label text
+			}
+			romajiLabel.Refresh()
+			clickableRomajiLabel.Refresh()
+		})
+		clickableRomajiLabel.Importance = widget.LowImportance // Style to make it look like plain text
+
 		return container.NewVBox(
-			container.NewCenter(widget.NewLabel("Genki Quiz!")), //Center the title
-			questionLabel,    // Display the question
-			romajiLabel,      // Display the romaji (phoenetic hint)
-			optionsContainer, // Buttons for answer choices
-			scoreLabel,       // Display the score
+			container.NewCenter(widget.NewLabelWithStyle(
+				fmt.Sprintf("Genki Quiz! (Chapter: %s)", currentChapter),
+				fyne.TextAlignCenter,
+				fyne.TextStyle{Bold: true},
+			)), // Centered title with the chapter
+			container.NewCenter(questionLabel),        // Use the original questionLabel directly
+			container.NewCenter(romajiLabel),          // Center the romaji label
+			container.NewCenter(clickableRomajiLabel), // Add the clickable text-style label
+			optionsContainer,                          // Buttons for answer choices
+			scoreLabel,                                // Display the score
 			widget.NewButton("Change Chapter", func() {
 				// Show chapter selection menu when the button is clicked
 				showChapterSelection()
 			}),
-			widget.NewButton("Next Question", loadQuestion),
 		)
 	}
 
@@ -136,7 +164,7 @@ func main() {
 			container.NewCenter(container.NewVBox(
 				widget.NewLabel("Select Chapter:"), // Prompt to select a chapter
 				widget.NewRadioGroup([]string{"1", "2", "3", "4"}, func(selected string) {
-					//Update the selected chapter and switch to quiz view
+					// Update the selected chapter and switch to quiz view
 					currentChapter = selected
 					questionContainer.Objects = []fyne.CanvasObject{gameLayout()} // Load the game layout
 					questionContainer.Refresh()                                   // Refresh to apply changes
@@ -153,17 +181,19 @@ func main() {
 		// Filter questions by the selected chapter
 		chapterQuestions := getQuestionsByChapter(questions, currentChapter)
 		if len(chapterQuestions) == 0 {
-			//Display a message if no questions are available
-			questionLabel.SetText("No questions available for this chapter.")
+			// Display a message if no questions are available
+			questionLabel.Text = "No questions available for this chapter."
+			questionLabel.Refresh()
 			optionsContainer.Objects = nil
 			optionsContainer.Refresh()
 			return
 		}
 
-		//Randomly pick a question
+		// Randomly pick a question
 		q := chapterQuestions[rand.Intn(len(chapterQuestions))]
-		questionLabel.SetText(q.QHirakata)                        // Set the question text
-		romajiLabel.SetText(fmt.Sprintf("Romaji: %s", q.QRomaji)) // Display the romaji
+		questionLabel.Text = q.QHirakata            // Set the question text
+		questionLabel.Refresh()                     // Refresh the canvas.Text to display the updated text
+		romajiLabel.SetText(fmt.Sprintf(q.QRomaji)) // Display the romaji
 
 		// Generate 4 answer options (1 correct + 3 random wrong answers)
 		randomAnswers := getRandomAnswers(chapterQuestions, q.QAnswer, 3)
@@ -177,7 +207,7 @@ func main() {
 		for _, opt := range allAnswers {
 			opt := opt // Capture the loop variable
 			button := widget.NewButton(opt, func() {
-				//Check if the selected answer is correct
+				// Check if the selected answer is correct
 				if opt == q.QAnswer {
 					score++ // Increment score for a correct answer
 				}
@@ -188,6 +218,7 @@ func main() {
 		}
 		optionsContainer.Refresh() // Refresh the container to display the buttons
 	}
+
 	questionContainer = container.NewVBox() // Create a container for dynamic content
 	showChapterSelection()                  // Show the chapter selection menu initially
 	w.SetContent(questionContainer)         // Set the window content
@@ -195,3 +226,4 @@ func main() {
 	// Start the application
 	w.ShowAndRun()
 }
+

@@ -2,3 +2,9 @@ Patch 1.0.1 updates:
 -Chapter selection on start
 -Chapter widget replaced with button to change chapters
 -Minor changes with text alignments
+
+Patch 1.0.2 updates:
+-Questions centered
+-Romaji centered and is now toggled
+-Updated labels (chapter selected now shown)
+-Next question button removed
