@@ -183,40 +183,72 @@ func main() {
 		if len(chapterQuestions) == 0 {
 			// Display a message if no questions are available
 			questionLabel.Text = "No questions available for this chapter."
-			questionLabel.Refresh()
-			optionsContainer.Objects = nil
-			optionsContainer.Refresh()
+			questionLabel.Refresh()        // Refresh the canvas.Text to display updated text
+			optionsContainer.Objects = nil // Clear answer options container
+			optionsContainer.Refresh()     // Refresh container to reflect changes
 			return
 		}
 
-		// Randomly pick a question
+		// Randomly pick a question from the filtered list
 		q := chapterQuestions[rand.Intn(len(chapterQuestions))]
 		questionLabel.Text = q.QHirakata            // Set the question text
-		questionLabel.Refresh()                     // Refresh the canvas.Text to display the updated text
-		romajiLabel.SetText(fmt.Sprintf(q.QRomaji)) // Display the romaji
+		questionLabel.Refresh()                     // Refresh to apply changes to the label
+		romajiLabel.SetText(fmt.Sprintf(q.QRomaji)) // Display the romaji for the question
 
 		// Generate 4 answer options (1 correct + 3 random wrong answers)
-		randomAnswers := getRandomAnswers(chapterQuestions, q.QAnswer, 3)
-		allAnswers := append(randomAnswers, q.QAnswer) // Combine correct and wrong answers
-		rand.Shuffle(len(allAnswers), func(i, j int) { // Shuffle the options
+		randomAnswers := getRandomAnswers(chapterQuestions, q.QAnswer, 3) // Get wrong answers
+		allAnswers := append(randomAnswers, q.QAnswer)                    // Combine correct and wrong answers
+		rand.Shuffle(len(allAnswers), func(i, j int) {                    // Shuffle the options
 			allAnswers[i], allAnswers[j] = allAnswers[j], allAnswers[i]
 		})
 
 		// Clear and populate the options container
-		optionsContainer.Objects = nil
+		optionsContainer.Objects = nil   // Clear existing buttons in the container
+		var correctButton *widget.Button // Variable to store the correct answer button
+
+		// Loop through all answer options and create buttons for each
 		for _, opt := range allAnswers {
-			opt := opt // Capture the loop variable
-			button := widget.NewButton(opt, func() {
+			opt := opt                // Capture the loop variable
+			var button *widget.Button // Declare button outside the loop's callback scope
+			button = widget.NewButton(opt, func() {
 				// Check if the selected answer is correct
 				if opt == q.QAnswer {
-					score++ // Increment score for a correct answer
+					score++                                          // Increment score for a correct answer
+					button.SetText(fmt.Sprintf("✅ %s", button.Text)) // Add checkmark to the correct answer
+					button.Refresh()                                 // Refresh the button
+				} else {
+					button.SetText(fmt.Sprintf("❌ %s", button.Text)) // Add crossmark to the wrong answer
+					button.Refresh()                                 // Refresh the button
 				}
-				scoreLabel.SetText(fmt.Sprintf("Score: %d", score)) // Update the score display
-				loadQuestion()                                      // Load the next question
+
+				// Mark the correct button with a checkmark if it was not clicked
+				if correctButton != nil && correctButton != button {
+					correctButton.SetText(fmt.Sprintf("✅ %s", correctButton.Text)) // Add checkmark to correct button
+					correctButton.Refresh()                                        // Refresh to apply changes
+				}
+
+				// Disable all buttons by removing their functionality
+				for _, obj := range optionsContainer.Objects {
+					if btn, ok := obj.(*widget.Button); ok {
+						btn.OnTapped = nil // Remove the callback to make the button unresponsive
+					}
+				}
+
+				// Delay loading the next question by 2 seconds
+				time.AfterFunc(2*time.Second, func() {
+					// Call loadQuestion after the delay to load the next question
+					loadQuestion()
+				})
 			})
+
+			// Save the correct button for later reference
+			if opt == q.QAnswer {
+				correctButton = button
+			}
+
 			optionsContainer.Add(button) // Add the button to the container
 		}
-		optionsContainer.Refresh() // Refresh the container to display the buttons
+		optionsContainer.Refresh() // Refresh the container to display the new buttons
 	}
 
 	questionContainer = container.NewVBox() // Create a container for dynamic content
@@ -226,4 +258,3 @@ func main() {
 	// Start the application
 	w.ShowAndRun()
 }
-

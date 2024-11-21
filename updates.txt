@@ -8,3 +8,7 @@ Patch 1.0.2 updates:
 -Romaji centered and is now toggled
 -Updated labels (chapter selected now shown)
 -Next question button removed
+
+Patch 1.0.3 updates:
+-The correct answer will now be shown with an icon after the user chooses an answer
+-3 sec delay added before next question is shown
