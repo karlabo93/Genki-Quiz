@@ -15,33 +15,42 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// Question represents the structure of a quiz question
+// Question represents a single quiz question with all its attributes
 type Question struct {
 	QID       string // Unique identifier for the question
-	QChapter  string // The chapter this question belongs to
-	QAnswer   string // The correct answer to the question
-	QHirakata string // The question in Hirakata format (displayed to the user)
-	QRomaji   string // The Romaji (phonetic representation) of the question
-	QType     string // Type or category of the question
+	QChapter  string // Chapter number the question belongs to
+	QAnswer   string // Correct answer
+	QHirakata string // Question text in Japanese characters
+	QRomaji   string // Question text in romanized form
+	QType     string // Category or type of question
 }
 
-// loadQuestionsFromExcel reads the questions from an excel file
+// gameState tracks the current state of the quiz
+type gameState struct {
+	score            int        // Current score
+	questionsAsked   int        // Number of questions completed
+	totalQuestions   int        // Total questions in current quiz
+	currentChapter   string     // Selected chapter
+	chapterQuestions []Question // Questions filtered for current chapter
+}
+
+// loadQuestionsFromExcel reads and parses questions from an Excel file
 func loadQuestionsFromExcel(filepath string) ([]Question, error) {
-	f, err := excelize.OpenFile(filepath) // Open the excel file
+	f, err := excelize.OpenFile(filepath)
 	if err != nil {
-		return nil, err //Return error if file cannot be opened
+		return nil, err
 	}
 
 	var questions []Question
-	rows, err := f.GetRows("Sheet1") //Read rows from the "Sheet1" worksheet
+	rows, err := f.GetRows("Sheet1")
 	if err != nil {
-		return nil, err //return error if rows can be read
+		return nil, err
 	}
 
-	//Iterate over the rows starting from the second row (skip header)
+	// Skip header row and process each data row
 	for _, row := range rows[1:] {
 		if len(row) < 6 {
-			continue //skip rows with incomplete data
+			continue // Skip incomplete rows
 		}
 		question := Question{
 			QID:       row[0],
@@ -51,210 +60,268 @@ func loadQuestionsFromExcel(filepath string) ([]Question, error) {
 			QRomaji:   row[4],
 			QType:     row[5],
 		}
-		questions = append(questions, question) //add questions to the list
+		questions = append(questions, question)
 	}
 
 	return questions, nil
 }
 
-// getQuestionsByChapter filters questions based on the selected chapter
+// getQuestionsByChapter filters questions for a specific chapter
 func getQuestionsByChapter(questions []Question, chapter string) []Question {
 	var filtered []Question
 	for _, q := range questions {
 		if q.QChapter == chapter {
-			filtered = append(filtered, q) // Add questions matching the chapter
+			filtered = append(filtered, q)
 		}
 	}
 	return filtered
 }
 
-// getRandomAnswers generates a list of random answers excluding the correct one
+// getRandomAnswers generates wrong answer options, avoiding duplicates
 func getRandomAnswers(questions []Question, correctAnswer string, count int) []string {
 	var answers []string
+	usedAnswers := make(map[string]bool)
+	usedAnswers[correctAnswer] = true
+
+	// Collect unique wrong answers
 	for _, q := range questions {
-		if q.QAnswer != correctAnswer {
-			answers = append(answers, q.QAnswer) // Add wrong answers to the list
+		if !usedAnswers[q.QAnswer] {
+			answers = append(answers, q.QAnswer)
+			usedAnswers[q.QAnswer] = true
 		}
 	}
 
-	//Shuffle the answers to randomize the selection
+	// Randomize answers
 	rand.Shuffle(len(answers), func(i, j int) {
 		answers[i], answers[j] = answers[j], answers[i]
 	})
 
-	//return only the requested number of answers
-	return answers[:count]
+	// Return requested number of wrong answers
+	if len(answers) > count {
+		return answers[:count]
+	}
+	return answers
 }
 
 func main() {
-	rand.Seed(time.Now().UnixNano()) // Seed the random number generator
+	rand.Seed(time.Now().UnixNano())
 
-	// Load quiz questions from an Excel file
+	// Load questions from Excel file
 	questions, err := loadQuestionsFromExcel("quizsheet.xlsx")
 	if err != nil {
 		log.Fatalf("Failed to load quiz questions: %v", err)
 	}
 
-	// Initialize the Fyne application
+	// Initialize Fyne application and window
 	a := app.New()
 	w := a.NewWindow("Genki Quiz")
-	w.Resize(fyne.NewSize(500, 400)) // Set the window size
+	w.Resize(fyne.NewSize(500, 400))
 
-	// Variables to track the game's state
-	score := 0                            // User's score
-	currentChapter := ""                  // Currently selected chapter
-	var questionContainer *fyne.Container // Container for dynamically switching views
+	// Initialize game state and UI elements
+	state := &gameState{}
+	var questionContainer *fyne.Container
+	questionLabel := canvas.NewText("", theme.TextColor())
+	questionLabel.TextStyle = fyne.TextStyle{Bold: true}
+	questionLabel.TextSize = 24
+	romajiLabel := widget.NewLabel("")
+	optionsContainer := container.NewVBox()
+	scoreLabel := widget.NewLabel("")
+	var clickableRomajiLabel *widget.Button
 
-	// UI elements for the quiz game
-	questionLabel := canvas.NewText("", theme.TextColor())         // Declare a `canvas.Text` for `questionLabel`
-	questionLabel.TextStyle = fyne.TextStyle{Bold: true}           // Set text style to bold
-	questionLabel.TextSize = 24                                    // Set a larger font size (default is 14)
-	romajiLabel := widget.NewLabel("")                             // Label to display the romaji (hidden initially)
-	optionsContainer := container.NewVBox()                        // Container for answer options
-	scoreLabel := widget.NewLabel(fmt.Sprintf("Score: %d", score)) // Display user's score
-	var clickableRomajiLabel *widget.Button                        // Declare the clickable label first
+	romajiLabel.Hide() // Initially hide romaji text
 
-	romajiLabel.Hide() // Hide the romaji label initially
+	// Forward declarations for UI navigation functions
+	var loadQuestion func()
+	var showChapterSelection func()
+	var showQuizTypeSelection func()
+	var showQuizSummary func()
 
-	// Function placeholders for dynamic behavior
-	var loadQuestion func()         // Function to load the next question
-	var showChapterSelection func() // Function to show chapter selection menu
-
-	// Layout for the main quiz game
+	// Creates main quiz game layout
 	gameLayout := func() fyne.CanvasObject {
-		romajiVisible := false // Track romaji visibility
+		romajiVisible := false
 
-		// Initialize the clickable label as a button styled as plain text
+		// Toggle button for showing/hiding romaji
 		clickableRomajiLabel = widget.NewButton("Show Romaji", func() {
 			romajiVisible = !romajiVisible
 			if romajiVisible {
-				romajiLabel.Show()                          // Show the romaji text
-				clickableRomajiLabel.SetText("Hide Romaji") // Update the label text
+				romajiLabel.Show()
+				clickableRomajiLabel.SetText("Hide Romaji")
 			} else {
-				romajiLabel.Hide()                          // Hide the romaji text
-				clickableRomajiLabel.SetText("Show Romaji") // Update the label text
+				romajiLabel.Hide()
+				clickableRomajiLabel.SetText("Show Romaji")
 			}
 			romajiLabel.Refresh()
 			clickableRomajiLabel.Refresh()
 		})
-		clickableRomajiLabel.Importance = widget.LowImportance // Style to make it look like plain text
+		clickableRomajiLabel.Importance = widget.LowImportance
 
+		// Progress and score tracking
+		progressLabel := widget.NewLabel(fmt.Sprintf("Question %d/%d", state.questionsAsked+1, state.totalQuestions))
+		scoreLabel.SetText(fmt.Sprintf("Score: %d/%d", state.score, state.questionsAsked))
+
+		// Arrange UI elements vertically
 		return container.NewVBox(
 			container.NewCenter(widget.NewLabelWithStyle(
-				fmt.Sprintf("Genki Quiz! (Chapter: %s)", currentChapter),
+				fmt.Sprintf("Genki Quiz! (Chapter: %s)", state.currentChapter),
 				fyne.TextAlignCenter,
 				fyne.TextStyle{Bold: true},
-			)), // Centered title with the chapter
-			container.NewCenter(questionLabel),        // Use the original questionLabel directly
-			container.NewCenter(romajiLabel),          // Center the romaji label
-			container.NewCenter(clickableRomajiLabel), // Add the clickable text-style label
-			optionsContainer,                          // Buttons for answer choices
-			scoreLabel,                                // Display the score
-			widget.NewButton("Change Chapter", func() {
-				// Show chapter selection menu when the button is clicked
-				showChapterSelection()
-			}),
+			)),
+			container.NewCenter(progressLabel),
+			container.NewCenter(questionLabel),
+			container.NewCenter(romajiLabel),
+			container.NewCenter(clickableRomajiLabel),
+			optionsContainer,
+			scoreLabel,
 		)
 	}
 
-	// Chapter selection menu
-	showChapterSelection = func() {
-		// Clear the current view and show chapter selection options
+	// Shows quiz completion screen with final score
+	showQuizSummary = func() {
 		questionContainer.Objects = []fyne.CanvasObject{
 			container.NewCenter(container.NewVBox(
-				widget.NewLabel("Select Chapter:"), // Prompt to select a chapter
-				widget.NewRadioGroup([]string{"1", "2", "3", "4"}, func(selected string) {
-					// Update the selected chapter and switch to quiz view
-					currentChapter = selected
-					questionContainer.Objects = []fyne.CanvasObject{gameLayout()} // Load the game layout
-					questionContainer.Refresh()                                   // Refresh to apply changes
-					loadQuestion()
+				widget.NewLabelWithStyle(
+					"Quiz Complete!",
+					fyne.TextAlignCenter,
+					fyne.TextStyle{Bold: true},
+				),
+				widget.NewLabel(fmt.Sprintf("Final Score: %d/%d (%.1f%%)",
+					state.score,
+					state.totalQuestions,
+					float64(state.score)/float64(state.totalQuestions)*100,
+				)),
+				widget.NewButton("Return to Chapter Selection", func() {
+					state.score = 0
+					state.questionsAsked = 0
+					showChapterSelection()
 				}),
 			)),
 		}
-		questionContainer.Refresh() // Refresh the container to show the menu
-
+		questionContainer.Refresh()
 	}
 
-	// Load a new question based on the selected chapter
+	// Shows quiz type selection screen (mini or full chapter)
+	showQuizTypeSelection = func() {
+		state.chapterQuestions = getQuestionsByChapter(questions, state.currentChapter)
+
+		questionContainer.Objects = []fyne.CanvasObject{
+			container.NewCenter(container.NewVBox(
+				widget.NewLabel(fmt.Sprintf("Chapter %s - Available Questions: %d",
+					state.currentChapter, len(state.chapterQuestions))),
+				widget.NewButton("Mini Quiz (10 questions)", func() {
+					state.totalQuestions = 10
+					if len(state.chapterQuestions) < 10 {
+						state.totalQuestions = len(state.chapterQuestions)
+					}
+					questionContainer.Objects = []fyne.CanvasObject{gameLayout()}
+					questionContainer.Refresh()
+					loadQuestion()
+				}),
+				widget.NewButton("Full Chapter Quiz", func() {
+					state.totalQuestions = len(state.chapterQuestions)
+					questionContainer.Objects = []fyne.CanvasObject{gameLayout()}
+					questionContainer.Refresh()
+					loadQuestion()
+				}),
+				widget.NewButton("Back to Chapter Selection", func() {
+					showChapterSelection()
+				}),
+			)),
+		}
+		questionContainer.Refresh()
+	}
+
+	// Shows chapter selection screen
+	showChapterSelection = func() {
+		questionContainer.Objects = []fyne.CanvasObject{
+			container.NewCenter(container.NewVBox(
+				widget.NewLabelWithStyle(
+					"Welcome to Genki Quiz!",
+					fyne.TextAlignCenter,
+					fyne.TextStyle{Bold: true},
+				),
+				widget.NewLabel("Select Chapter:"),
+				widget.NewRadioGroup([]string{"1", "2", "3", "4"}, func(selected string) {
+					state.currentChapter = selected
+					showQuizTypeSelection()
+				}),
+			)),
+		}
+		questionContainer.Refresh()
+	}
+
+	// Loads and displays a new question
 	loadQuestion = func() {
-		// Filter questions by the selected chapter
-		chapterQuestions := getQuestionsByChapter(questions, currentChapter)
-		if len(chapterQuestions) == 0 {
-			// Display a message if no questions are available
-			questionLabel.Text = "No questions available for this chapter."
-			questionLabel.Refresh()        // Refresh the canvas.Text to display updated text
-			optionsContainer.Objects = nil // Clear answer options container
-			optionsContainer.Refresh()     // Refresh container to reflect changes
+		if state.questionsAsked >= state.totalQuestions {
+			showQuizSummary()
 			return
 		}
 
-		// Randomly pick a question from the filtered list
-		q := chapterQuestions[rand.Intn(len(chapterQuestions))]
-		questionLabel.Text = q.QHirakata            // Set the question text
-		questionLabel.Refresh()                     // Refresh to apply changes to the label
-		romajiLabel.SetText(fmt.Sprintf(q.QRomaji)) // Display the romaji for the question
+		// Create question pool
+		availableQuestions := make([]Question, len(state.chapterQuestions))
+		copy(availableQuestions, state.chapterQuestions)
 
-		// Generate 4 answer options (1 correct + 3 random wrong answers)
-		randomAnswers := getRandomAnswers(chapterQuestions, q.QAnswer, 3) // Get wrong answers
-		allAnswers := append(randomAnswers, q.QAnswer)                    // Combine correct and wrong answers
-		rand.Shuffle(len(allAnswers), func(i, j int) {                    // Shuffle the options
+		// Select random question and set up display
+		q := availableQuestions[rand.Intn(len(availableQuestions))]
+		questionLabel.Text = q.QHirakata
+		questionLabel.Refresh()
+		romajiLabel.SetText(q.QRomaji)
+
+		// Generate and shuffle answer options
+		randomAnswers := getRandomAnswers(availableQuestions, q.QAnswer, 3)
+		allAnswers := append(randomAnswers, q.QAnswer)
+		rand.Shuffle(len(allAnswers), func(i, j int) {
 			allAnswers[i], allAnswers[j] = allAnswers[j], allAnswers[i]
 		})
 
-		// Clear and populate the options container
-		optionsContainer.Objects = nil   // Clear existing buttons in the container
-		var correctButton *widget.Button // Variable to store the correct answer button
+		// Create answer buttons
+		optionsContainer.Objects = nil
+		var correctButton *widget.Button
 
-		// Loop through all answer options and create buttons for each
 		for _, opt := range allAnswers {
-			opt := opt                // Capture the loop variable
-			var button *widget.Button // Declare button outside the loop's callback scope
+			opt := opt
+			var button *widget.Button
 			button = widget.NewButton(opt, func() {
-				// Check if the selected answer is correct
+				state.questionsAsked++
 				if opt == q.QAnswer {
-					score++                                          // Increment score for a correct answer
-					button.SetText(fmt.Sprintf("✅ %s", button.Text)) // Add checkmark to the correct answer
-					button.Refresh()                                 // Refresh the button
+					state.score++
+					button.SetText(fmt.Sprintf("✅ %s", button.Text))
 				} else {
-					button.SetText(fmt.Sprintf("❌ %s", button.Text)) // Add crossmark to the wrong answer
-					button.Refresh()                                 // Refresh the button
+					button.SetText(fmt.Sprintf("❌ %s", button.Text))
 				}
+				button.Refresh()
 
-				// Mark the correct button with a checkmark if it was not clicked
+				// Show correct answer if wrong choice selected
 				if correctButton != nil && correctButton != button {
-					correctButton.SetText(fmt.Sprintf("✅ %s", correctButton.Text)) // Add checkmark to correct button
-					correctButton.Refresh()                                        // Refresh to apply changes
+					correctButton.SetText(fmt.Sprintf("✅ %s", correctButton.Text))
+					correctButton.Refresh()
 				}
 
-				// Disable all buttons by removing their functionality
+				// Update score display
+				scoreLabel.SetText(fmt.Sprintf("Score: %d/%d", state.score, state.questionsAsked))
+
+				// Disable all buttons after answer
 				for _, obj := range optionsContainer.Objects {
 					if btn, ok := obj.(*widget.Button); ok {
-						btn.OnTapped = nil // Remove the callback to make the button unresponsive
+						btn.OnTapped = nil
 					}
 				}
 
-				// Delay loading the next question by 2 seconds
-				time.AfterFunc(2*time.Second, func() {
-					// Call loadQuestion after the delay to load the next question
-					loadQuestion()
-				})
+				// Load next question after delay
+				time.AfterFunc(2*time.Second, loadQuestion)
 			})
 
-			// Save the correct button for later reference
 			if opt == q.QAnswer {
 				correctButton = button
 			}
 
-			optionsContainer.Add(button) // Add the button to the container
+			optionsContainer.Add(button)
 		}
-		optionsContainer.Refresh() // Refresh the container to display the new buttons
+		optionsContainer.Refresh()
 	}
 
-	questionContainer = container.NewVBox() // Create a container for dynamic content
-	showChapterSelection()                  // Show the chapter selection menu initially
-	w.SetContent(questionContainer)         // Set the window content
-
-	// Start the application
+	// Initialize and start application
+	questionContainer = container.NewVBox()
+	showChapterSelection()
+	w.SetContent(questionContainer)
 	w.ShowAndRun()
 }

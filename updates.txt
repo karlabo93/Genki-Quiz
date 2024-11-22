@@ -12,3 +12,7 @@ Patch 1.0.2 updates:
 Patch 1.0.3 updates:
 -The correct answer will now be shown with an icon after the user chooses an answer
 -3 sec delay added before next question is shown
+
+Patch 1.0.4 updates:
+-Add a mini quiz option (10 questions)
+-Final score now shown at the end of the quiz
